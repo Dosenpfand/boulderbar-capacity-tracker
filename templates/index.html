@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>boulderbar Capacity Tracker</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -211,13 +212,23 @@
         }
 
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
         }
 
         @keyframes fadeInDown {
@@ -225,6 +236,7 @@
                 opacity: 0;
                 transform: translateY(-20px);
             }
+
             to {
                 opacity: 1;
                 transform: translateY(0);
@@ -236,6 +248,7 @@
                 opacity: 0;
                 transform: translateY(20px);
             }
+
             to {
                 opacity: 1;
                 transform: translateY(0);
@@ -257,13 +270,23 @@
                 justify-content: space-between;
             }
 
+            .container {
+                padding: 12px;
+            }
+
             .chart-container {
-                height: 400px;
-                padding: 15px;
+                height: 520px;
+                padding: 12px;
+            }
+
+            .chart-container canvas {
+                width: 100% !important;
+                height: 100% !important;
             }
         }
     </style>
 </head>
+
 <body>
     <header>
         <div class="header-content">
@@ -358,6 +381,17 @@
         const loadingEl = document.getElementById('loading');
         const timeframeSelect = document.getElementById('timeframe');
         const DEFAULT_HOURS = 24;
+        const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-GB', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+
+        function formatTimestamp(timestamp) {
+            return DATE_TIME_FORMATTER.format(new Date(timestamp));
+        }
 
         function setLoading(isLoading) {
             loadingEl.style.display = isLoading ? 'block' : 'none';
@@ -426,8 +460,8 @@
                     borderWidth: 2.5,
                     tension: 0.4,
                     spanGaps: true,
-                    pointRadius: 3,
-                    pointHoverRadius: 6,
+                    pointRadius: 0,
+                    pointHoverRadius: 5,
                     pointBackgroundColor: colorPalette[colorIndex % colorPalette.length],
                     pointBorderColor: '#fff',
                     pointBorderWidth: 2
@@ -459,7 +493,7 @@
             window.myChart = new Chart(canvas, {
                 type: 'line',
                 data: {
-                    labels: sortedTimestamps.map(ts => new Date(ts).toLocaleString()),
+                    labels: sortedTimestamps.map(formatTimestamp),
                     datasets: datasets
                 },
                 options: {
@@ -479,6 +513,18 @@
                                 weight: 'bold'
                             },
                             padding: 20
+                        },
+                        subtitle: {
+                            display: true,
+                            text: 'Capacity (%)',
+                            color: textColor,
+                            font: {
+                                size: 12,
+                                weight: '600'
+                            },
+                            padding: {
+                                bottom: 10
+                            }
                         },
                         legend: {
                             labels: {
@@ -500,7 +546,7 @@
                             padding: 12,
                             displayColors: true,
                             callbacks: {
-                                label: function(context) {
+                                label: function (context) {
                                     return context.dataset.label + ': ' + context.parsed.y + '%';
                                 }
                             }
@@ -510,8 +556,8 @@
                         x: {
                             ticks: {
                                 color: textColor,
-                                maxRotation: 45,
-                                minRotation: 45
+                                maxRotation: 0,
+                                minRotation: 0
                             },
                             grid: {
                                 color: gridColor,
@@ -532,7 +578,7 @@
                             max: 100,
                             ticks: {
                                 color: textColor,
-                                callback: function(value) {
+                                callback: function (value) {
                                     return value + '%';
                                 }
                             },
@@ -541,13 +587,7 @@
                                 drawBorder: false
                             },
                             title: {
-                                display: true,
-                                text: 'Capacity',
-                                color: textColor,
-                                font: {
-                                    size: 14,
-                                    weight: 'bold'
-                                }
+                                display: false
                             }
                         }
                     }
@@ -602,4 +642,5 @@
         fetchData(DEFAULT_HOURS);
     </script>
 </body>
+
 </html>
