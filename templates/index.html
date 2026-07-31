@@ -293,6 +293,13 @@
             <h1>🧗 boulderbar Capacity Tracker</h1>
             <div class="header-actions">
                 <div class="timeframe-select">
+                    <label for="view-mode">View</label>
+                    <select id="view-mode">
+                        <option value="timeseries" selected>Time Series</option>
+                        <option value="weekly">Weekly Pattern</option>
+                    </select>
+                </div>
+                <div class="timeframe-select" id="timeframe-wrapper">
                     <label for="timeframe">Timeframe</label>
                     <select id="timeframe">
                         <option value="6">Last 6 hours</option>
@@ -301,6 +308,19 @@
                         <option value="720">Last 30 days</option>
                         <option value="0">All data</option>
                     </select>
+                </div>
+                <div class="timeframe-select" id="weekly-weeks-wrapper" style="display: none;">
+                    <label for="weekly-weeks">History</label>
+                    <select id="weekly-weeks">
+                        <option value="4">Last 4 weeks</option>
+                        <option value="8" selected>Last 8 weeks</option>
+                        <option value="12">Last 12 weeks</option>
+                        <option value="0">All time</option>
+                    </select>
+                </div>
+                <div class="timeframe-select" id="weekly-location-wrapper" style="display: none;">
+                    <label for="weekly-location">Location</label>
+                    <select id="weekly-location"></select>
                 </div>
                 <button class="theme-toggle" onclick="toggleTheme()">
                     <span id="theme-icon">🌙</span>
@@ -379,8 +399,15 @@
         const chartsDiv = document.getElementById('charts');
         const statsDiv = document.getElementById('stats');
         const loadingEl = document.getElementById('loading');
+        const viewModeSelect = document.getElementById('view-mode');
+        const timeframeWrapper = document.getElementById('timeframe-wrapper');
         const timeframeSelect = document.getElementById('timeframe');
+        const weeklyWeeksWrapper = document.getElementById('weekly-weeks-wrapper');
+        const weeklyWeeksSelect = document.getElementById('weekly-weeks');
+        const weeklyLocationWrapper = document.getElementById('weekly-location-wrapper');
+        const weeklyLocationSelect = document.getElementById('weekly-location');
         const DEFAULT_HOURS = 24;
+        let lastWeeklyData = null;
         const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-GB', {
             day: '2-digit',
             month: '2-digit',
@@ -615,6 +642,283 @@
             renderChart(sortedTimestamps, datasets);
         }
 
+        // --- Weekly pattern view (average + percentile band per weekday/hour) ---
+
+        function populateLocationOptions(series) {
+            const locations = Object.keys(series).sort();
+            const previousValue = weeklyLocationSelect.value;
+
+            weeklyLocationSelect.textContent = '';
+            for (const loc of locations) {
+                const option = document.createElement('option');
+                option.value = loc;
+                option.textContent = loc;
+                weeklyLocationSelect.appendChild(option);
+            }
+
+            if (locations.includes(previousValue)) {
+                weeklyLocationSelect.value = previousValue;
+            } else if (locations.length > 0) {
+                weeklyLocationSelect.value = locations[0];
+            }
+        }
+
+        function renderWeeklyStats(location, labels, series) {
+            let busiestIdx = -1;
+            let quietestIdx = -1;
+            let busiestVal = -Infinity;
+            let quietestVal = Infinity;
+            let weightedSum = 0;
+            let totalCount = 0;
+
+            series.avg.forEach((avg, i) => {
+                const count = series.count[i];
+                if (avg === null || count === 0) return;
+                if (avg > busiestVal) {
+                    busiestVal = avg;
+                    busiestIdx = i;
+                }
+                if (avg < quietestVal) {
+                    quietestVal = avg;
+                    quietestIdx = i;
+                }
+                weightedSum += avg * count;
+                totalCount += count;
+            });
+
+            const overallAvg = totalCount > 0 ? Math.round(weightedSum / totalCount) : 0;
+
+            statsDiv.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-label">Location</div>
+                    <div class="stat-value" style="font-size: 1.3rem;">${location}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Weekly Avg Capacity</div>
+                    <div class="stat-value">${overallAvg}%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Busiest Time (UTC)</div>
+                    <div class="stat-value" style="font-size: 1.3rem;">${busiestIdx >= 0 ? labels[busiestIdx] : '–'}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Quietest Time (UTC)</div>
+                    <div class="stat-value" style="font-size: 1.3rem;">${quietestIdx >= 0 ? labels[quietestIdx] : '–'}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Samples Used</div>
+                    <div class="stat-value">${totalCount}</div>
+                </div>
+            `;
+        }
+
+        function renderWeeklyChart(labels, series, location) {
+            chartsDiv.innerHTML = '';
+
+            const container = document.createElement('div');
+            container.className = 'chart-container';
+
+            const canvas = document.createElement('canvas');
+            container.appendChild(canvas);
+            chartsDiv.appendChild(container);
+
+            const theme = document.documentElement.getAttribute('data-theme');
+            const textColor = theme === 'dark' ? '#e6edf3' : '#1a1a1a';
+            const gridColor = theme === 'dark' ? '#30363d' : '#dee2e6';
+            const accent = colorPalette[0];
+
+            if (window.myChart) {
+                window.myChart.destroy();
+            }
+
+            const datasets = [
+                {
+                    label: 'Typical range (25th–75th percentile)',
+                    data: series.p75,
+                    borderWidth: 0,
+                    pointRadius: 0,
+                    fill: '+1',
+                    backgroundColor: accent + '25',
+                    spanGaps: true,
+                    order: 2
+                },
+                {
+                    label: 'P25 (lower band)',
+                    data: series.p25,
+                    borderWidth: 0,
+                    pointRadius: 0,
+                    fill: false,
+                    spanGaps: true,
+                    order: 2
+                },
+                {
+                    label: 'Average',
+                    data: series.avg,
+                    borderColor: accent,
+                    backgroundColor: accent,
+                    borderWidth: 2.5,
+                    tension: 0.3,
+                    spanGaps: true,
+                    pointRadius: 0,
+                    pointHoverRadius: 5,
+                    pointBackgroundColor: accent,
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2,
+                    order: 1
+                }
+            ];
+
+            window.myChart = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: `Typical Week for ${location}`,
+                            color: textColor,
+                            font: {
+                                size: 18,
+                                weight: 'bold'
+                            },
+                            padding: 20
+                        },
+                        subtitle: {
+                            display: true,
+                            text: 'Average capacity (%) by weekday and hour, UTC',
+                            color: textColor,
+                            font: {
+                                size: 12,
+                                weight: '600'
+                            },
+                            padding: {
+                                bottom: 10
+                            }
+                        },
+                        legend: {
+                            labels: {
+                                color: textColor,
+                                padding: 15,
+                                font: {
+                                    size: 12
+                                },
+                                usePointStyle: true,
+                                pointStyle: 'circle',
+                                filter: function (legendItem) {
+                                    return legendItem.text !== 'P25 (lower band)';
+                                }
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: theme === 'dark' ? '#1c2128' : '#ffffff',
+                            titleColor: textColor,
+                            bodyColor: textColor,
+                            borderColor: gridColor,
+                            borderWidth: 1,
+                            padding: 12,
+                            displayColors: true,
+                            callbacks: {
+                                label: function (context) {
+                                    if (context.parsed.y === null) return null;
+                                    return context.dataset.label + ': ' + context.parsed.y + '%';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                color: textColor,
+                                maxRotation: 60,
+                                minRotation: 0,
+                                autoSkip: true,
+                                maxTicksLimit: 28
+                            },
+                            grid: {
+                                color: gridColor,
+                                drawBorder: false
+                            },
+                            title: {
+                                display: true,
+                                text: 'Day / Hour (UTC)',
+                                color: textColor,
+                                font: {
+                                    size: 14,
+                                    weight: 'bold'
+                                }
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            ticks: {
+                                color: textColor,
+                                callback: function (value) {
+                                    return value + '%';
+                                }
+                            },
+                            grid: {
+                                color: gridColor,
+                                drawBorder: false
+                            },
+                            title: {
+                                display: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderWeeklyDashboard(data) {
+            const locations = Object.keys(data.series);
+            if (locations.length === 0) {
+                renderEmptyState('No data available yet to build a weekly pattern.');
+                return;
+            }
+
+            const selectedLocation = weeklyLocationSelect.value || locations[0];
+            const seriesForLocation = data.series[selectedLocation];
+            if (!seriesForLocation) {
+                renderEmptyState('No data available for this location.');
+                return;
+            }
+
+            renderWeeklyStats(selectedLocation, data.labels, seriesForLocation);
+            renderWeeklyChart(data.labels, seriesForLocation, selectedLocation);
+        }
+
+        function buildWeeklyRequestUrl(weeks) {
+            const params = new URLSearchParams({ weeks: String(weeks) });
+            return `/api/weekly-pattern?${params.toString()}`;
+        }
+
+        function fetchWeeklyPattern(weeks) {
+            setLoading(true);
+
+            fetch(buildWeeklyRequestUrl(weeks))
+                .then(response => response.json())
+                .then(data => {
+                    setLoading(false);
+                    lastWeeklyData = data;
+                    populateLocationOptions(data.series);
+                    renderWeeklyDashboard(data);
+                })
+                .catch(error => {
+                    setLoading(false);
+                    renderEmptyState(`Error loading data: ${error.message}`);
+                });
+        }
+
         function buildRequestUrl(hours) {
             const params = new URLSearchParams({ hours: String(hours) });
             return `/api/data?${params.toString()}`;
@@ -634,6 +938,32 @@
                     renderEmptyState(`Error loading data: ${error.message}`);
                 });
         }
+
+        function refreshCurrentView() {
+            if (viewModeSelect.value === 'weekly') {
+                fetchWeeklyPattern(weeklyWeeksSelect.value);
+            } else {
+                fetchData(timeframeSelect.value);
+            }
+        }
+
+        viewModeSelect.addEventListener('change', () => {
+            const isWeekly = viewModeSelect.value === 'weekly';
+            timeframeWrapper.style.display = isWeekly ? 'none' : '';
+            weeklyWeeksWrapper.style.display = isWeekly ? '' : 'none';
+            weeklyLocationWrapper.style.display = isWeekly ? '' : 'none';
+            refreshCurrentView();
+        });
+
+        weeklyWeeksSelect.addEventListener('change', () => {
+            fetchWeeklyPattern(weeklyWeeksSelect.value);
+        });
+
+        weeklyLocationSelect.addEventListener('change', () => {
+            if (lastWeeklyData) {
+                renderWeeklyDashboard(lastWeeklyData);
+            }
+        });
 
         timeframeSelect.addEventListener('change', () => {
             fetchData(timeframeSelect.value);

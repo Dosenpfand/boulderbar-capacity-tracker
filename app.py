@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import os
 import sqlite3
+import statistics
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,6 +13,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask, jsonify, render_template, request
 
 app = Flask(__name__)
+WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 API_URL = (
     "https://boulderbar.net/wp-json/boulderbar/v1/capacity?locations=260,261,262,263,264,265,284"
 )
@@ -129,6 +131,81 @@ def get_data():
         data[loc_name]["capacities"].append(capacity)
 
     return jsonify(data)
+
+
+@app.route("/api/weekly-pattern")
+def get_weekly_pattern():
+    """Aggregate capacity by weekday+hour-of-day to show a typical week.
+
+    For every (weekday, hour) bucket across all recorded weeks, returns the
+    average capacity plus the 25th/75th percentile range, so the frontend
+    can render a "typical week" chart with an average line and a percentile
+    band. Bucketing is done in UTC, matching the stored timestamps.
+    """
+    weeks_param = request.args.get("weeks", "0")
+    try:
+        weeks = int(weeks_param)
+    except ValueError:
+        weeks = 0
+
+    params: list[str] = []
+    where_clause = ""
+    if weeks > 0:
+        where_clause = "WHERE timestamp >= ?"
+        params.append((datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat())
+
+    query = f"SELECT timestamp, location_name, capacity FROM capacity {where_clause}"
+
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.execute(query, params)
+        rows = cursor.fetchall()
+
+    # buckets[location][weekday][hour] = [capacity, capacity, ...]
+    buckets: dict[str, list[list[list[int]]]] = {}
+    for timestamp, loc_name, capacity in rows:
+        dt = datetime.fromisoformat(timestamp)
+        weekday = dt.weekday()  # Monday == 0
+        hour = dt.hour
+        loc_buckets = buckets.setdefault(loc_name, [[[] for _ in range(24)] for _ in range(7)])
+        loc_buckets[weekday][hour].append(capacity)
+
+    labels = [
+        f"{WEEKDAY_LABELS[weekday]} {hour:02d}:00" for weekday in range(7) for hour in range(24)
+    ]
+
+    series = {}
+    for loc_name, loc_buckets in buckets.items():
+        avg_list: list[float | None] = []
+        p25_list: list[float | None] = []
+        p75_list: list[float | None] = []
+        count_list: list[int] = []
+
+        for weekday in range(7):
+            for hour in range(24):
+                values = loc_buckets[weekday][hour]
+                count_list.append(len(values))
+                if not values:
+                    avg_list.append(None)
+                    p25_list.append(None)
+                    p75_list.append(None)
+                elif len(values) == 1:
+                    avg_list.append(round(values[0], 1))
+                    p25_list.append(round(values[0], 1))
+                    p75_list.append(round(values[0], 1))
+                else:
+                    q1, _median, q3 = statistics.quantiles(values, n=4, method="inclusive")
+                    avg_list.append(round(statistics.fmean(values), 1))
+                    p25_list.append(round(q1, 1))
+                    p75_list.append(round(q3, 1))
+
+        series[loc_name] = {
+            "avg": avg_list,
+            "p25": p25_list,
+            "p75": p75_list,
+            "count": count_list,
+        }
+
+    return jsonify({"labels": labels, "series": series})
 
 
 if __name__ == "__main__":
