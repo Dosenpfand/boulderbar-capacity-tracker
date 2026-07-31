@@ -322,6 +322,10 @@
                     <label for="weekly-location">Location</label>
                     <select id="weekly-location"></select>
                 </div>
+                <button class="theme-toggle" id="copy-link-btn" onclick="copyShareableLink()">
+                    <span>🔗</span>
+                    <span id="copy-link-text">Copy Link</span>
+                </button>
                 <button class="theme-toggle" onclick="toggleTheme()">
                     <span id="theme-icon">🌙</span>
                     <span id="theme-text">Dark Mode</span>
@@ -340,6 +344,28 @@
     </div>
 
     <script>
+        // Shareable link
+        function copyShareableLink() {
+            const url = window.location.href;
+            const label = document.getElementById('copy-link-text');
+            const restoreLabel = () => {
+                label.textContent = 'Copy Link';
+            };
+            const showResult = (text) => {
+                label.textContent = text;
+                setTimeout(restoreLabel, 1500);
+            };
+
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(url).then(
+                    () => showResult('Copied!'),
+                    () => showResult('Copy failed')
+                );
+            } else {
+                showResult('Copy failed');
+            }
+        }
+
         // Theme management
         function toggleTheme() {
             const html = document.documentElement;
@@ -406,8 +432,8 @@
         const weeklyWeeksSelect = document.getElementById('weekly-weeks');
         const weeklyLocationWrapper = document.getElementById('weekly-location-wrapper');
         const weeklyLocationSelect = document.getElementById('weekly-location');
-        const DEFAULT_HOURS = 24;
         let lastWeeklyData = null;
+        let pendingLocationFromUrl = null;
         const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-GB', {
             day: '2-digit',
             month: '2-digit',
@@ -623,6 +649,8 @@
         }
 
         function renderDashboard(data) {
+            syncUrl();
+
             const locations = Object.keys(data);
             if (locations.length === 0) {
                 renderEmptyState('No data available for this timeframe.');
@@ -642,11 +670,61 @@
             renderChart(sortedTimestamps, datasets);
         }
 
+        // --- Shareable URL state (view / timeframe / weeks / location) ---
+
+        function applyStateFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+
+            const view = params.get('view');
+            if (view === 'weekly' || view === 'timeseries') {
+                viewModeSelect.value = view;
+            }
+
+            const hours = params.get('hours');
+            if (hours !== null && Array.from(timeframeSelect.options).some(o => o.value === hours)) {
+                timeframeSelect.value = hours;
+            }
+
+            const weeks = params.get('weeks');
+            if (weeks !== null && Array.from(weeklyWeeksSelect.options).some(o => o.value === weeks)) {
+                weeklyWeeksSelect.value = weeks;
+            }
+
+            // Location isn't known until data is fetched, so stash it and
+            // consume it once the location dropdown is populated.
+            pendingLocationFromUrl = params.get('location');
+
+            const isWeekly = viewModeSelect.value === 'weekly';
+            timeframeWrapper.style.display = isWeekly ? 'none' : '';
+            weeklyWeeksWrapper.style.display = isWeekly ? '' : 'none';
+            weeklyLocationWrapper.style.display = isWeekly ? '' : 'none';
+        }
+
+        function syncUrl() {
+            const params = new URLSearchParams();
+            params.set('view', viewModeSelect.value);
+
+            if (viewModeSelect.value === 'weekly') {
+                params.set('weeks', weeklyWeeksSelect.value);
+                if (weeklyLocationSelect.value) {
+                    params.set('location', weeklyLocationSelect.value);
+                }
+            } else {
+                params.set('hours', timeframeSelect.value);
+            }
+
+            const newUrl = `${window.location.pathname}?${params.toString()}`;
+            history.replaceState(null, '', newUrl);
+        }
+
         // --- Weekly pattern view (average + percentile band per weekday/hour) ---
 
         function populateLocationOptions(series) {
             const locations = Object.keys(series).sort();
-            const previousValue = weeklyLocationSelect.value;
+            const preferredValue = pendingLocationFromUrl !== null
+                ? pendingLocationFromUrl
+                : weeklyLocationSelect.value;
+            pendingLocationFromUrl = null;
 
             weeklyLocationSelect.textContent = '';
             for (const loc of locations) {
@@ -656,8 +734,8 @@
                 weeklyLocationSelect.appendChild(option);
             }
 
-            if (locations.includes(previousValue)) {
-                weeklyLocationSelect.value = previousValue;
+            if (locations.includes(preferredValue)) {
+                weeklyLocationSelect.value = preferredValue;
             } else if (locations.length > 0) {
                 weeklyLocationSelect.value = locations[0];
             }
@@ -880,6 +958,8 @@
         }
 
         function renderWeeklyDashboard(data) {
+            syncUrl();
+
             const locations = Object.keys(data.series);
             if (locations.length === 0) {
                 renderEmptyState('No data available yet to build a weekly pattern.');
@@ -969,7 +1049,8 @@
             fetchData(timeframeSelect.value);
         });
 
-        fetchData(DEFAULT_HOURS);
+        applyStateFromUrl();
+        refreshCurrentView();
     </script>
 </body>
 
